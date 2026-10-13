@@ -1,0 +1,32 @@
+# Xcode
+# gitignore template for Xcode / Swift macOS projects
+
+# User settings & state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Build artifacts & DerivedData
+build/
+DerivedData/
+*.moved-aside
+*.xccheckout
+
+# App packaging & symbols
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Swift Package Manager
+.build/
+Packages/
