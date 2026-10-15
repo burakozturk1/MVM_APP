@@ -11,7 +11,11 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
     private var appStreams: [pid_t: SCStream] = [:]
     private var streamToPID: [ObjectIdentifier: pid_t] = [:]
     private var appVolumes: [pid_t: Float] = [:]
+    private var appMutes: [pid_t: Bool] = [:]
     private var isReceivingAudio: [pid_t: Bool] = [:]
+    
+    // Aktif olarak ses akıtan uygulamaların PID kümesi (UI göstergesi için)
+    @Published var activeAudioPIDs: Set<pid_t> = []
     
     // Ses iş parçacıkları ve UI etkileşimleri arasında veri yarışını (data race) önleyen kilit
     private let stateLock = NSLock()
@@ -20,6 +24,23 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
         super.init()
         checkPermissions()
         setupEngine()
+        setupWorkspaceObservers()
+    }
+    
+    // Uygulama kapanışlarını dinleyip kaynakları anında temizleyen gözlemci
+    private func setupWorkspaceObservers() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleAppTerminatedNotification(_:)),
+            name: NSWorkspace.didTerminateApplicationNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAppTerminatedNotification(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+        let pid = app.processIdentifier
+        stopCapturingAudio(for: pid)
     }
     
     func checkPermissions() {
@@ -95,13 +116,35 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
         let vol = Float(volume)
         stateLock.lock()
         appVolumes[pid] = vol
+        let isMuted = appMutes[pid] ?? false
         let node = appNodes[pid]
         stateLock.unlock()
         
         if let node = node {
-            node.volume = vol
-            print("🎚️ [PID: \(pid)] Ses anlık güncellendi: %\(Int(vol * 100))")
+            node.volume = isMuted ? 0.0 : vol
+            print("🎚️ [PID: \(pid)] Ses anlık güncellendi: %\(Int(vol * 100))\(isMuted ? " (Muted)" : "")")
         }
+    }
+    
+    // Uygulama bazlı sessize alma (Mute / Unmute)
+    func setMuted(for pid: pid_t, isMuted: Bool) {
+        stateLock.lock()
+        appMutes[pid] = isMuted
+        let vol = appVolumes[pid] ?? 1.0
+        let node = appNodes[pid]
+        stateLock.unlock()
+        
+        if let node = node {
+            node.volume = isMuted ? 0.0 : vol
+            print("🔇 [PID: \(pid)] Sessize alma: \(isMuted ? "Açık" : "Kapalı")")
+        }
+    }
+    
+    // Genel çıkış sesini ayarlama (Master Volume)
+    func setMasterVolume(_ volume: Double) {
+        let clamped = Float(max(0.0, min(1.0, volume)))
+        engine.mainMixerNode.outputVolume = clamped
+        print("🎛️ Genel Ses (Master): %\(Int(clamped * 100))")
     }
     
     // PID için AVAudioPlayerNode oluşturur veya var olanı döner (Format uyumlu bağlama ile)
@@ -119,9 +162,10 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
         // PlayerNode'u ana miksere gelen ses formatı ile bağlıyoruz
         engine.connect(playerNode, to: engine.mainMixerNode, format: format)
         
-        // Kullanıcının daha önce ayarladığı bir ses seviyesi varsa uygula
+        // Kullanıcının daha önce ayarladığı bir ses seviyesi veya mute durumu varsa uygula
         let initialVolume = appVolumes[pid] ?? 1.0
-        playerNode.volume = initialVolume
+        let isMuted = appMutes[pid] ?? false
+        playerNode.volume = isMuted ? 0.0 : initialVolume
         
         if !engine.isRunning {
             try? engine.start()
@@ -180,11 +224,14 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
         
         guard let pid = targetPID else { return }
         
-        // 2. İlk ses akışı başladığında bilgilendirme logu düş
+        // 2. İlk ses akışı başladığında bilgilendirme logu düş ve UI göstergesini güncelle
         stateLock.lock()
         if isReceivingAudio[pid] == false {
             isReceivingAudio[pid] = true
             print("🔊 [PID: \(pid)] Aktif ses akışı gelmeye başladı!")
+            DispatchQueue.main.async {
+                self.activeAudioPIDs.insert(pid)
+            }
         }
         stateLock.unlock()
         
@@ -207,7 +254,7 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
         playerNode.scheduleBuffer(pcmBuffer, at: nil, options: [], completionHandler: nil)
     }
     
-    // İsteğe bağlı: Kancayı kaldırma ve kaynak temizliği
+    // Kancayı kaldırma ve kaynak temizliği
     func stopCapturingAudio(for pid: pid_t) {
         stateLock.lock()
         let stream = appStreams.removeValue(forKey: pid)
@@ -217,7 +264,12 @@ class AudioMixer: NSObject, ObservableObject, SCStreamOutput {
         let node = appNodes.removeValue(forKey: pid)
         isReceivingAudio.removeValue(forKey: pid)
         appVolumes.removeValue(forKey: pid)
+        appMutes.removeValue(forKey: pid)
         stateLock.unlock()
+        
+        DispatchQueue.main.async {
+            self.activeAudioPIDs.remove(pid)
+        }
         
         if let node = node {
             node.stop()
