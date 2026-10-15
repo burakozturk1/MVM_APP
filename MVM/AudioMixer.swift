@@ -156,6 +156,9 @@ class AudioMixer: NSObject, ObservableObject {
     /// Set of PIDs currently streaming audible sound (used for green activity indicators in UI).
     @Published var activeAudioPIDs: Set<pid_t> = []
 
+    /// Set of PIDs that currently possess Core Audio objects / audio capabilities.
+    @Published var audioCapablePIDs: Set<pid_t> = []
+
     // MARK: - Private State
 
     private let engine = AVAudioEngine()
@@ -195,6 +198,7 @@ class AudioMixer: NSObject, ObservableObject {
         setupWorkspaceObservers()
         setupCoreAudioListeners()
         startActivityPolling()
+        refreshAudioCapablePIDs()
     }
 
     deinit {
@@ -283,6 +287,9 @@ class AudioMixer: NSObject, ObservableObject {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         let pid = app.processIdentifier
         stopCapturingAudio(for: pid)
+        DispatchQueue.main.async {
+            self.audioCapablePIDs.remove(pid)
+        }
     }
 
     // MARK: - Core Audio Process Listener
@@ -322,6 +329,8 @@ class AudioMixer: NSObject, ObservableObject {
     }
 
     fileprivate func handleProcessListChanged() {
+        refreshAudioCapablePIDs()
+
         stateLock.lock()
         let pending = pendingPIDs
         stateLock.unlock()
@@ -429,6 +438,28 @@ class AudioMixer: NSObject, ObservableObject {
         masterVolume = clamped
         engine.mainMixerNode.outputVolume = clamped
         print("🎛️ [AudioMixer] Master Volume: \(Int(clamped * 100))%")
+    }
+
+    /// Re-evaluates all running regular applications to identify which ones currently have audio objects.
+    func refreshAudioCapablePIDs() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let runningApps = NSWorkspace.shared.runningApplications.filter {
+                $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            }
+            var capable = Set<pid_t>()
+            for app in runningApps {
+                let objects = self.findAudioObjectIDs(for: app.processIdentifier)
+                if !objects.isEmpty {
+                    capable.insert(app.processIdentifier)
+                }
+            }
+            DispatchQueue.main.async {
+                if self.audioCapablePIDs != capable {
+                    self.audioCapablePIDs = capable
+                }
+            }
+        }
     }
 
     // MARK: - Tap Creation Pipeline
