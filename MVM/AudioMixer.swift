@@ -159,6 +159,9 @@ class AudioMixer: NSObject, ObservableObject {
     /// Set of PIDs that currently possess Core Audio objects / audio capabilities.
     @Published var audioCapablePIDs: Set<pid_t> = []
 
+    /// Indicates whether system screen/audio capture permission has been granted by user.
+    @Published var hasPermission: Bool = true
+
     // MARK: - Private State
 
     private let engine = AVAudioEngine()
@@ -222,13 +225,20 @@ class AudioMixer: NSObject, ObservableObject {
     // MARK: - Permissions
 
     func checkPermissions() {
-        if CGPreflightScreenCaptureAccess() {
-            print("✅ [AudioMixer] Screen capture / Audio tap permission granted.")
-        } else {
-            print("⚠️ [AudioMixer] Requesting screen capture permission for audio tap...")
-            CGRequestScreenCaptureAccess()
+            let hasAccess = CGPreflightScreenCaptureAccess()
+            
+            // UI'ın haberdar olması için Published değişkeni ana thread'de güncelliyoruz
+            DispatchQueue.main.async {
+                self.hasPermission = hasAccess
+            }
+            
+            if hasAccess {
+                print("✅ [AudioMixer] Screen capture / Audio tap permission granted.")
+            } else {
+                print("⚠️ [AudioMixer] Requesting screen capture permission for audio tap...")
+                CGRequestScreenCaptureAccess()
+            }
         }
-    }
 
     // MARK: - Engine Initialization
 

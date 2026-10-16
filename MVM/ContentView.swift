@@ -174,6 +174,37 @@ struct ContentView: View {
                 .help("Uygulama Listesini Yenile")
             }
             
+            // MARK: - İzin Uyarı Banner'ı (YENİ EKLENEN KISIM)
+            if !audioMixer.hasPermission {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.yellow)
+                        Text("Sistem İzni Gerekiyor")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Button("Ayarları Aç") {
+                            openPrivacySettings()
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                    }
+                    
+                    Text("Uygulamanın sesleri kontrol edebilmesi için Sistem Ayarları > Gizlilik ve Güvenlik > Ekran ve Sistem Sesi Kaydı bölümünden izin vermeli ve uygulamayı yeniden başlatmalısınız.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(Color.yellow.opacity(0.1))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+                )
+            }
+            
             // MARK: - Genel Ses (Master Volume)
             HStack(spacing: 8) {
                 Button {
@@ -193,8 +224,8 @@ struct ContentView: View {
                     .frame(width: 36, alignment: .leading)
                 
                 Slider(value: $masterVolume, in: 0...1)
-                    .disabled(isMasterMuted)
-                    .opacity(isMasterMuted ? 0.4 : 1.0)
+                    .disabled(isMasterMuted || !audioMixer.hasPermission) // İzin yoksa slider'ı da inaktif yap
+                    .opacity((isMasterMuted || !audioMixer.hasPermission) ? 0.4 : 1.0)
                     .onChange(of: masterVolume) { _, newValue in
                         if !isMasterMuted {
                             audioMixer.setMasterVolume(newValue)
@@ -299,6 +330,13 @@ struct ContentView: View {
             audioMixer.refreshAudioCapablePIDs()
         }
     }
+    
+    // MARK: - Yardımcı Fonksiyonlar
+    private func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 // Tek bir uygulamanın satır görünümü
@@ -337,8 +375,8 @@ struct AppRowView: View {
             
             // Ses Kaydırıcısı
             Slider(value: $app.volume, in: 0...1)
-                .disabled(app.isMuted)
-                .opacity(app.isMuted ? 0.4 : 1.0)
+                .disabled(app.isMuted || !audioMixer.hasPermission)
+                .opacity((app.isMuted || !audioMixer.hasPermission) ? 0.4 : 1.0)
                 .onChange(of: app.volume) { _, newValue in
                     if !app.isMuted {
                         audioMixer.setVolume(for: app.pid, volume: newValue)
@@ -364,7 +402,9 @@ struct AppRowView: View {
                     .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
+            .disabled(!audioMixer.hasPermission) // İzin yoksa butonları kapat
             .help(app.isMuted ? "Sesi Aç" : "Sessize Al")
         }
     }
 }
+
