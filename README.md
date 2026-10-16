@@ -9,7 +9,7 @@
 Mac Volume Mixer (MVM) is a native menu bar application for macOS that allows you to control the audio volume of individual applications separately. Unlike other tools, MVM does not require any third-party virtual audio drivers (such as BlackHole). It utilizes native macOS Core Audio APIs introduced in macOS 14 for zero-latency, echo-free audio management.
 
 <p align="center">
-  <img src="assets/mvm-gif.gif" alt="Mac Volume Mixer demo" width="700">
+  <img src="assets/mvm-gif" alt="Mac Volume Mixer demo" width="700">
 </p>
 
 ## ✨ Features
