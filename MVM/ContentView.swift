@@ -122,6 +122,18 @@ struct ContentView: View {
     @StateObject private var audioMixer = AudioMixer()
     @State private var masterVolume: Double = 1.0
     @State private var isMasterMuted: Bool = false
+    @State private var showOnlyAudioApps: Bool = true
+    
+    private func isAppVisible(_ app: AppItem) -> Bool {
+        let matchesSearch = audioController.searchText.isEmpty || app.name.localizedCaseInsensitiveContains(audioController.searchText)
+        let hasAudio = audioMixer.audioCapablePIDs.contains(app.pid) || audioMixer.activeAudioPIDs.contains(app.pid)
+        let matchesAudio = !showOnlyAudioApps || hasAudio
+        return matchesSearch && matchesAudio
+    }
+    
+    private var visibleAppCount: Int {
+        audioController.activeApps.filter { isAppVisible($0) }.count
+    }
     
     var body: some View {
         VStack(spacing: 12) {
@@ -131,7 +143,7 @@ struct ContentView: View {
                     Text("Mac Volume Mixer")
                         .font(.headline)
                         .fontWeight(.semibold)
-                    Text("\(audioController.activeApps.count) açık uygulama")
+                    Text(showOnlyAudioApps ? "\(visibleAppCount) sesli uygulama" : "\(visibleAppCount) açık uygulama")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -139,7 +151,20 @@ struct ContentView: View {
                 Spacer()
                 
                 Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showOnlyAudioApps.toggle()
+                    }
+                } label: {
+                    Image(systemName: showOnlyAudioApps ? "speaker.wave.2.circle.fill" : "app.badge.checkmark")
+                        .font(.system(size: 13))
+                        .foregroundColor(showOnlyAudioApps ? .accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(showOnlyAudioApps ? "Sadece sesli uygulamalar gösteriliyor (Tümünü görmek için tıkla)" : "Tüm açık uygulamalar gösteriliyor (Sadece seslileri görmek için tıkla)")
+                
+                Button {
                     audioController.fetchRunningApps()
+                    audioMixer.refreshAudioCapablePIDs()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11, weight: .semibold))
@@ -147,6 +172,37 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Uygulama Listesini Yenile")
+            }
+            
+            // MARK: - İzin Uyarı Banner'ı (YENİ EKLENEN KISIM)
+            if !audioMixer.hasPermission {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.yellow)
+                        Text("Sistem İzni Gerekiyor")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Button("Ayarları Aç") {
+                            openPrivacySettings()
+                        }
+                        .font(.system(size: 11))
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                    }
+                    
+                    Text("Uygulamanın sesleri kontrol edebilmesi için Sistem Ayarları > Gizlilik ve Güvenlik > Ekran ve Sistem Sesi Kaydı bölümünden izin vermeli ve uygulamayı yeniden başlatmalısınız.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(Color.yellow.opacity(0.1))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+                )
             }
             
             // MARK: - Genel Ses (Master Volume)
@@ -168,8 +224,8 @@ struct ContentView: View {
                     .frame(width: 36, alignment: .leading)
                 
                 Slider(value: $masterVolume, in: 0...1)
-                    .disabled(isMasterMuted)
-                    .opacity(isMasterMuted ? 0.4 : 1.0)
+                    .disabled(isMasterMuted || !audioMixer.hasPermission) // İzin yoksa slider'ı da inaktif yap
+                    .opacity((isMasterMuted || !audioMixer.hasPermission) ? 0.4 : 1.0)
                     .onChange(of: masterVolume) { _, newValue in
                         if !isMasterMuted {
                             audioMixer.setMasterVolume(newValue)
@@ -187,7 +243,7 @@ struct ContentView: View {
             .cornerRadius(8)
             
             // Arama Çubuğu (4'ten fazla uygulama olduğunda kolaylık sağlar)
-            if audioController.activeApps.count > 4 {
+            if visibleAppCount > 4 || !audioController.searchText.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
@@ -214,22 +270,33 @@ struct ContentView: View {
             Divider()
             
             // MARK: - Uygulamalar Listesi
-            if audioController.filteredApps.isEmpty {
+            if visibleAppCount == 0 {
                 VStack(spacing: 8) {
-                    Image(systemName: "app.dashed")
+                    Image(systemName: showOnlyAudioApps ? "speaker.slash" : "app.dashed")
                         .font(.system(size: 26))
                         .foregroundColor(.secondary)
-                    Text(audioController.searchText.isEmpty ? "Açık uygulama bulunamadı" : "Eşleşen uygulama yok")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
+                    Text(
+                        !audioController.searchText.isEmpty
+                            ? "Eşleşen uygulama yok"
+                            : (showOnlyAudioApps ? "Aktif ses çıkışı olan uygulama bulunamadı" : "Açık uygulama bulunamadı")
+                    )
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    
+                    if showOnlyAudioApps && audioController.searchText.isEmpty {
+                        Text("Ses desteği olan bir uygulama açıldığında otomatik listelenir.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    }
                 }
                 .frame(maxWidth: .infinity, minHeight: 140)
             } else {
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach($audioController.activeApps) { $app in
-                            // Arama filtresine uyup uymadığını kontrol et
-                            if audioController.searchText.isEmpty || app.name.localizedCaseInsensitiveContains(audioController.searchText) {
+                            if isAppVisible(app) {
                                 AppRowView(app: $app, audioMixer: audioMixer)
                             }
                         }
@@ -259,6 +326,16 @@ struct ContentView: View {
         }
         .padding(14)
         .frame(width: 360)
+        .onAppear {
+            audioMixer.refreshAudioCapablePIDs()
+        }
+    }
+    
+    // MARK: - Yardımcı Fonksiyonlar
+    private func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
@@ -298,8 +375,8 @@ struct AppRowView: View {
             
             // Ses Kaydırıcısı
             Slider(value: $app.volume, in: 0...1)
-                .disabled(app.isMuted)
-                .opacity(app.isMuted ? 0.4 : 1.0)
+                .disabled(app.isMuted || !audioMixer.hasPermission)
+                .opacity((app.isMuted || !audioMixer.hasPermission) ? 0.4 : 1.0)
                 .onChange(of: app.volume) { _, newValue in
                     if !app.isMuted {
                         audioMixer.setVolume(for: app.pid, volume: newValue)
@@ -325,7 +402,9 @@ struct AppRowView: View {
                     .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
+            .disabled(!audioMixer.hasPermission) // İzin yoksa butonları kapat
             .help(app.isMuted ? "Sesi Aç" : "Sessize Al")
         }
     }
 }
+
